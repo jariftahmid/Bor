@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GPS Tracker Pro</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="cordova.js"></script>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #000; color: #fff; text-align: center; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80vh; margin: 0; }
+  .card { background: #1a1a1a; padding: 30px; border-radius: 15px; border: 1px solid #333; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 90%; max-width: 350px; }
+  h2 { color: #3498db; margin-bottom: 20px; font-size: 24px; }
+  #status { margin-top: 20px; font-size: 14px; white-space: pre-line; line-height: 1.8; color: #bbb; }
+  input { padding: 12px; margin-bottom: 15px; font-size: 16px; width: 80%; background: #111; color: #3498db; border: 2px solid #333; border-radius: 8px; text-align: center; font-weight: bold; }
+  .badge { padding: 6px 15px; border-radius: 20px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .active { background: #27ae60; color: white; box-shadow: 0 0 10px rgba(39, 174, 96, 0.4); }
+  .inactive { background: #c0392b; color: white; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>AuraGlobe Tracker</h2>
+  <input id="deviceId" placeholder="Device ID" readonly>
+  <div id="status">Connecting to System...</div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getDatabase, ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDfFKT5y5SZ8Wl_HaRezaDVpSEmyk4H7pY",
+  authDomain: "aura-globe-735d3.firebaseapp.com",
+  databaseURL: "https://aura-globe-735d3-default-rtdb.firebaseio.com",
+  projectId: "aura-globe-735d3",
+  storageBucket: "aura-globe-735d3.firebasestorage.app",
+  messagingSenderId: "964001905585",
+  appId: "1:964001905585:web:1c52a216d056cbbdf29b90"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// 🆔 Device Identification
+let deviceId = localStorage.getItem("deviceId") || "aura_" + Math.random().toString(36).substr(2,6);
+localStorage.setItem("deviceId", deviceId);
+document.getElementById("deviceId").value = deviceId;
+
+let watchId = null;
+let batteryLevel = "0";
+
+// 🔌 Global Background Protection Logic
+document.addEventListener('deviceready', onDeviceReady, false);
+
+function onDeviceReady() {
+  console.log("Cordova is ready!");
+  
+  // 1. Enable Background Mode
+  if(window.cordova && cordova.plugins.backgroundMode) {
+    cordova.plugins.backgroundMode.enable();
+    cordova.plugins.backgroundMode.overrideBackButton();
+    
+    // Notification setup so Android doesn't kill the app
+    cordova.plugins.backgroundMode.setDefaults({
+      title: 'AuraGlobe Tracker',
+      text: 'Background Monitoring Active',
+      icon: 'icon',
+      color: '3498db',
+      resume: true,
+      hidden: false
+    });
+
+    // Keep WebView alive during sleep
+    cordova.plugins.backgroundMode.on('activate', () => {
+      cordova.plugins.backgroundMode.disableWebViewOptimizations();
+    });
+  }
+
+  // 2. Battery Status Listener
+  window.addEventListener("batterystatus", (info) => {
+    batteryLevel = info.level;
+  }, false);
+
+  // 3. Start Listener
+  initControlListener();
+  document.getElementById("status").innerText = "Ready & Waiting...";
+}
+
+function startTracking() {
+  if(watchId !== null) return;
+
+  watchId = navigator.geolocation.watchPosition(
+    pos => {
+      const data = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        time: Date.now(),
+        battery: batteryLevel + "%",
+        online: true,
+        lastSeen: new Date().toLocaleTimeString()
+      };
+      
+      set(ref(db, "tracker/" + deviceId), data);
+
+      document.getElementById("status").innerHTML = 
+        `<span class="badge active">Streaming</span>\nLat: ${data.lat.toFixed(5)}\nLng: ${data.lng.toFixed(5)}\nLast Sent: ${data.lastSeen}`;
+    },
+    err => {
+      document.getElementById("status").innerHTML = `<span class="badge inactive">GPS Error</span>\n${err.message}`;
+    },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+  );
+}
+
+function stopTracking() {
+  if(watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+  document.getElementById("status").innerHTML = `<span class="badge inactive">Standby</span>\nTracking Paused by Dashboard`;
+  update(ref(db, "tracker/" + deviceId), { online: false });
+}
+
+function initControlListener() {
+  const controlRef = ref(db, "control/" + deviceId + "/tracking");
+  onValue(controlRef, snap => {
+    const val = snap.val();
+    if(val === true) startTracking();
+    else if(val === false) stopTracking();
+  });
+}
+
+// Ensure offline status if app is killed
+window.addEventListener("beforeunload", () => {
+  update(ref(db, "tracker/" + deviceId), { online: false });
+});
+
+</script>
+</body>
+</html>
